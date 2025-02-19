@@ -90,18 +90,8 @@ const query = computed<RelationQueryMultiple>(() => ({
 	page: page.value,
 }));
 
-const { displayItems, create, update, remove, select, cleanItem, isLocalItem, getItemEdits } = useRelationMultiple(
-	value,
-	query,
-	relationInfo,
-	primaryKey,
-);
-
-function getDeselectIcon(item: DisplayItem) {
-	if (item.$type === 'deleted') return 'settings_backup_restore';
-	if (isLocalItem(item)) return 'delete';
-	return 'close';
-}
+const { displayItems, loading, create, update, remove, select, cleanItem, isLocalItem, getItemEdits } =
+	useRelationMultiple(value, query, relationInfo, primaryKey);
 
 const selectDrawer = ref(false);
 
@@ -191,11 +181,19 @@ function stageEdits(item: Record<string, any>) {
 </script>
 
 <template>
+	<v-skeleton-loader v-if="loading" type="block-list-item" />
+
+	<template v-else-if="root && filteredDisplayItems.length === 0">
+		<v-notice>
+			{{ t('no_items') }}
+		</v-notice>
+	</template>
+
 	<draggable
 		v-bind="dragOptions"
 		class="drag-area"
 		:class="{ root, drag }"
-		tag="ul"
+		tag="v-list"
 		:model-value="filteredDisplayItems"
 		:group="{ name: 'g1' }"
 		item-key="id"
@@ -207,7 +205,7 @@ function stageEdits(item: Record<string, any>) {
 		@change="change($event as ChangeEvent)"
 	>
 		<template #item="{ element, index }">
-			<li class="row" :class="{ draggable: element.$type !== 'deleted' }">
+			<v-list-item class="row" :class="{ draggable: element.$type !== 'deleted' }">
 				<item-preview
 					:item="element"
 					:edits="getItemEdits(element)"
@@ -217,7 +215,7 @@ function stageEdits(item: Record<string, any>) {
 					:relation-info="relationInfo"
 					:open="open[element[relationInfo.relatedPrimaryKeyField.field]] ?? false"
 					:deleted="element.$type === 'deleted'"
-					:delete-icon="getDeselectIcon(element)"
+					:is-local-item="isLocalItem(element)"
 					@update:open="open[element[relationInfo.relatedPrimaryKeyField.field]] = $event"
 					@input="stageEdits"
 					@deselect="remove(element)"
@@ -238,14 +236,14 @@ function stageEdits(item: Record<string, any>) {
 					:items-moved="itemsMoved"
 					@update:model-value="updateModelValue($event, index)"
 				/>
-			</li>
+			</v-list-item>
 		</template>
 	</draggable>
 
 	<template v-if="root">
-		<div v-if="!disabled" class="actions">
-			<v-button v-if="enableCreate" @click="addNewActive = true">{{ t('create_new') }}</v-button>
-			<v-button v-if="enableSelect" @click="selectDrawer = true">{{ t('add_existing') }}</v-button>
+		<div class="actions">
+			<v-button v-if="enableCreate" :disabled @click="addNewActive = true">{{ t('create_new') }}</v-button>
+			<v-button v-if="enableSelect" :disabled @click="selectDrawer = true">{{ t('add_existing') }}</v-button>
 		</div>
 
 		<drawer-item
@@ -272,6 +270,8 @@ function stageEdits(item: Record<string, any>) {
 </template>
 
 <style lang="scss" scoped>
+@use '@/styles/mixins';
+
 .drag-area {
 	min-height: 12px;
 
@@ -279,24 +279,48 @@ function stageEdits(item: Record<string, any>) {
 		margin-left: 0;
 		padding: 0;
 
+		.v-skeleton-loader {
+			margin: 12px 0px 12px auto;
+			width: calc(100% - 24px);
+		}
+
 		&:empty {
 			min-height: 0;
 		}
+	}
+
+	&.v-list {
+		@include mixins.list-interface;
+
+		overflow: hidden;
 	}
 }
 
 .row {
 	.preview {
 		padding: 12px;
-		background-color: var(--theme--popover--menu--background);
-		border-radius: var(--theme--popover--menu--border-radius);
-		box-shadow: var(--theme--popover--menu--box-shadow);
 		cursor: grab;
-		transition: var(--fast) var(--transition);
-		transition-property: box-shadow, background-color;
+		border-style: solid;
+		background-color: var(--theme--background);
+		border: var(--theme--border-width) solid var(--theme--border-color);
+		border-radius: var(--theme--border-radius);
 
 		& + .drag-area {
-			padding-top: 12px;
+			padding: 0;
+
+			> .v-list-item:first-child {
+				margin-top: 8px;
+			}
+		}
+	}
+
+	&.v-list-item {
+		display: block;
+		--v-list-item-padding: 0;
+		--v-list-item-margin: 0;
+
+		+ .v-list-item {
+			margin-top: 8px;
 		}
 	}
 
@@ -307,14 +331,9 @@ function stageEdits(item: Record<string, any>) {
 
 .ghost .preview {
 	background-color: var(--theme--primary-background);
-	box-shadow: 0 !important;
 }
 
 .actions {
-	margin-top: 12px;
-}
-
-.actions .v-button + .v-button {
-	margin-left: 12px;
+	@include mixins.list-interface-actions;
 }
 </style>

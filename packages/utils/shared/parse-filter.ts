@@ -1,5 +1,5 @@
 import { REGEX_BETWEEN_PARENS } from '@directus/constants';
-import type { Accountability, Filter, Role, User } from '@directus/types';
+import type { Accountability, Filter, Policy, Role, User } from '@directus/types';
 import { isObjectLike } from 'lodash-es';
 import { adjustDate } from './adjust-date.js';
 import { deepMap } from './deep-map.js';
@@ -10,14 +10,18 @@ import { parseJSON } from './parse-json.js';
 import { toArray } from './to-array.js';
 
 type ParseFilterContext = {
-	// The user can add any custom fields to user
+	// The user can add any custom fields to any of them
 	$CURRENT_USER?: User & Record<string, any>;
 	$CURRENT_ROLE?: Role & Record<string, any>;
+	$CURRENT_ROLES?: (Role & Record<string, any>)[];
+	$CURRENT_POLICIES?: (Policy & Record<string, any>)[];
 };
+
+type BasicAccountability = Pick<Accountability, 'user' | 'role' | 'roles'>;
 
 export function parseFilter(
 	filter: Filter | null,
-	accountability: Accountability | null,
+	accountability: BasicAccountability | null,
 	context: ParseFilterContext = {},
 ): Filter | null {
 	let parsedFilter = parseFilterRecursive(filter, accountability, context);
@@ -37,36 +41,32 @@ function shiftLogicalOperatorsUp(filter: any): any {
 	if (!key) return filter;
 
 	if (logicalFilterOperators.includes(key)) {
-		for (const childKey of Object.keys(filter[key])) {
-			filter[key][childKey] = shiftLogicalOperatorsUp(filter[key][childKey]);
-		}
-
-		return filter;
+		return {
+			[key]: filter[key].map(shiftLogicalOperatorsUp),
+		};
 	} else if (key.startsWith('_')) {
 		return filter;
 	} else {
-		const childKey = Object.keys(filter[key])[0];
-		if (!childKey) return filter;
+		const childResult = shiftLogicalOperatorsUp(filter[key]);
+		const childKey = Object.keys(childResult)[0];
+
+		if (!childKey) return { [key]: childResult };
 
 		if (logicalFilterOperators.includes(childKey)) {
-			return {
-				[childKey]: toArray(filter[key][childKey]).map((childFilter) => {
-					return { [key]: shiftLogicalOperatorsUp(childFilter) };
-				}),
-			};
-		} else if (bypassOperators.includes(childKey)) {
-			return { [key]: { [childKey]: shiftLogicalOperatorsUp(filter[key][childKey]) } };
-		} else if (childKey.startsWith('_')) {
-			return filter;
-		} else {
-			return { [key]: shiftLogicalOperatorsUp(filter[key]) };
+			return shiftLogicalOperatorsUp({
+				[childKey]: childResult[childKey].map((nestedFilter: any) => ({
+					[key]: nestedFilter,
+				})),
+			});
 		}
+
+		return { [key]: childResult };
 	}
 }
 
 function parseFilterRecursive(
 	filter: Filter | null,
-	accountability: Accountability | null,
+	accountability: BasicAccountability | null,
 	context: ParseFilterContext = {},
 ): Filter | null {
 	if (filter === null || filter === undefined) {
@@ -90,7 +90,7 @@ function parseFilterRecursive(
 
 export function parsePreset(
 	preset: Record<string, any> | null,
-	accountability: Accountability | null,
+	accountability: BasicAccountability | null,
 	context: ParseFilterContext,
 ) {
 	if (!preset) return preset;
@@ -99,7 +99,7 @@ export function parsePreset(
 
 function parseFilterEntry(
 	[key, value]: [string, any],
-	accountability: Accountability | null,
+	accountability: BasicAccountability | null,
 	context: ParseFilterContext,
 ): Filter {
 	if (['_or', '_and'].includes(String(key))) {
@@ -123,7 +123,7 @@ function parseFilterEntry(
 	}
 }
 
-function parseFilterValue(value: any, accountability: Accountability | null, context: ParseFilterContext) {
+function parseFilterValue(value: any, accountability: BasicAccountability | null, context: ParseFilterContext) {
 	if (value === 'true') return true;
 	if (value === 'false') return false;
 	if (value === 'null' || value === 'NULL') return null;
@@ -131,7 +131,7 @@ function parseFilterValue(value: any, accountability: Accountability | null, con
 	return value;
 }
 
-function parseDynamicVariable(value: any, accountability: Accountability | null, context: ParseFilterContext) {
+function parseDynamicVariable(value: any, accountability: BasicAccountability | null, context: ParseFilterContext) {
 	if (value.startsWith('$NOW')) {
 		if (value.includes('(') && value.includes(')')) {
 			const adjustment = value.match(REGEX_BETWEEN_PARENS)?.[1];
@@ -147,8 +147,19 @@ function parseDynamicVariable(value: any, accountability: Accountability | null,
 		return get(context, value, null);
 	}
 
+	if (value.startsWith('$CURRENT_ROLES')) {
+		if (value === '$CURRENT_ROLES') return accountability?.roles ?? null;
+		return get(context, value, null);
+	}
+
 	if (value.startsWith('$CURRENT_ROLE')) {
 		if (value === '$CURRENT_ROLE') return accountability?.role ?? null;
+		return get(context, value, null);
+	}
+
+	if (value.startsWith('$CURRENT_POLICIES')) {
+		if (value === '$CURRENT_POLICIES')
+			return (get(context, value, null) as Policy[] | null)?.map(({ id }) => id) ?? null;
 		return get(context, value, null);
 	}
 }

@@ -7,7 +7,6 @@ import { getSpecialForType } from '@/utils/get-special-for-type';
 import { hideDragImage } from '@/utils/hide-drag-image';
 import { notify } from '@/utils/notify';
 import { unexpectedError } from '@/utils/unexpected-error';
-import formatTitle from '@directus/format-title';
 import type { Field, Width } from '@directus/types';
 import { cloneDeep } from 'lodash';
 import { computed, ref, unref } from 'vue';
@@ -60,14 +59,22 @@ const showRelatedCollectionLink = computed(
 		['translations', 'm2o', 'm2m', 'o2m', 'files'].includes(unref(localType) as string),
 );
 
-function setWidth(width: Width) {
-	fieldsStore.updateField(props.field.collection, props.field.field, { meta: { width } });
+async function setWidth(width: Width) {
+	try {
+		await fieldsStore.updateField(props.field.collection, props.field.field, { meta: { width } });
+	} catch (error) {
+		unexpectedError(error);
+	}
 }
 
-function toggleVisibility() {
-	fieldsStore.updateField(props.field.collection, props.field.field, {
-		meta: { hidden: !props.field.meta?.hidden },
-	});
+async function toggleVisibility() {
+	try {
+		await fieldsStore.updateField(props.field.collection, props.field.field, {
+			meta: { hidden: !props.field.meta?.hidden },
+		});
+	} catch (error) {
+		unexpectedError(error);
+	}
 }
 
 function useDeleteField() {
@@ -142,7 +149,12 @@ function useDuplicate() {
 async function openFieldDetail() {
 	if (!props.field.meta) {
 		const special = getSpecialForType(props.field.type);
-		await fieldsStore.updateField(props.field.collection, props.field.field, { meta: { special } });
+
+		try {
+			await fieldsStore.updateField(props.field.collection, props.field.field, { meta: { special } });
+		} catch (error) {
+			unexpectedError(error);
+		}
 	}
 
 	router.push(`/settings/data-model/${props.field.collection}/${props.field.field}`);
@@ -318,8 +330,6 @@ const tFieldType = (type: string) => t(type === 'geometry' ? 'geometry.All' : ty
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
-
 .field-select {
 	--input-height: 40px;
 	--theme--form--field--input--padding: 8px;

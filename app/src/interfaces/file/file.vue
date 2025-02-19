@@ -21,6 +21,7 @@ type FileInfo = {
 const props = defineProps<{
 	value: string | Record<string, any> | null;
 	disabled?: boolean;
+	loading?: boolean;
 	folder?: string;
 	collection: string;
 	field: string;
@@ -43,8 +44,17 @@ const query = ref<RelationQuerySingle>({
 
 const { collection, field } = toRefs(props);
 const { relationInfo } = useRelationM2O(collection, field);
-const { displayItem: file, loading, update, remove } = useRelationSingle(value, query, relationInfo);
-const { createAllowed, updateAllowed } = useRelationPermissionsM2O(relationInfo);
+
+const {
+	displayItem: file,
+	loading,
+	update,
+	remove,
+} = useRelationSingle(value, query, relationInfo, {
+	enabled: computed(() => !props.loading),
+});
+
+const { createAllowed } = useRelationPermissionsM2O(relationInfo);
 
 const { t } = useI18n();
 
@@ -57,7 +67,7 @@ const fileExtension = computed(() => {
 
 const assetURL = computed(() => {
 	const id = typeof props.value === 'string' ? props.value : props.value?.id;
-	return '/assets/' + id;
+	return getAssetUrl(id);
 });
 
 const imageThumbnail = computed(() => {
@@ -169,12 +179,17 @@ function useURLImport() {
 								<v-icon v-else name="folder_open" />
 							</div>
 						</template>
+
 						<template #append>
-							<template v-if="file">
-								<v-icon v-tooltip="t('edit')" name="open_in_new" class="edit" @click.stop="editDrawerActive = true" />
-								<v-icon v-if="!disabled" v-tooltip="t('deselect')" class="deselect" name="close" @click.stop="remove" />
-							</template>
-							<v-icon v-else name="attach_file" />
+							<div class="item-actions">
+								<template v-if="file">
+									<v-icon v-tooltip="t('edit_item')" name="edit" clickable @click.stop="editDrawerActive = true" />
+
+									<v-remove v-if="!disabled" :item-info="relationInfo" :item-edits="edits" deselect @action="remove" />
+								</template>
+
+								<v-icon v-else name="attach_file" />
+							</div>
 						</template>
 					</v-input>
 				</div>
@@ -220,7 +235,7 @@ function useURLImport() {
 			collection="directus_files"
 			:primary-key="file.id"
 			:edits="edits"
-			:disabled="disabled || !updateAllowed"
+			:disabled="disabled"
 			@input="update"
 		>
 			<template #actions>
@@ -279,6 +294,12 @@ function useURLImport() {
 </template>
 
 <style lang="scss" scoped>
+@use '@/styles/mixins';
+
+.item-actions {
+	@include mixins.list-interface-item-actions;
+}
+
 .preview {
 	--v-icon-color: var(--theme--form--field--input--foreground-subdued);
 
@@ -317,17 +338,5 @@ function useURLImport() {
 	font-weight: 600;
 	font-size: 11px;
 	text-transform: uppercase;
-}
-
-.deselect:hover {
-	--v-icon-color: var(--theme--danger);
-}
-
-.edit {
-	margin-right: 4px;
-
-	&:hover {
-		--v-icon-color: var(--theme--form--field--input--foreground);
-	}
 }
 </style>

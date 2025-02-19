@@ -45,7 +45,6 @@ const templateWithDefaults = computed(() =>
 );
 
 const showAddNew = computed(() => {
-	if (props.disabled) return false;
 	if (props.value === null) return true;
 	if (props.limit === undefined) return true;
 	if (Array.isArray(props.value) && props.value.length < props.limit) return true;
@@ -215,33 +214,41 @@ function closeDrawer() {
 			<p>{{ t('interfaces.list.incompatible_data') }}</p>
 		</v-notice>
 
-		<v-list v-if="Array.isArray(internalValue) && internalValue.length > 0">
-			<draggable
-				:disabled="disabled"
-				:model-value="internalValue"
-				item-key="id"
-				handle=".drag-handle"
-				v-bind="{ 'force-fallback': true }"
-				@update:model-value="$emit('input', $event)"
-			>
-				<template #item="{ element, index }">
-					<v-list-item :dense="internalValue.length > 4" block @click="openItem(index)">
-						<v-icon v-if="!disabled && !sort" name="drag_handle" class="drag-handle" left @click.stop="() => {}" />
-						<render-template
-							:fields="fields"
-							:item="{ ...defaults, ...element }"
-							:direction="direction"
-							:template="templateWithDefaults"
-						/>
-						<div class="spacer" />
-						<v-icon v-if="!disabled" name="close" @click.stop="removeItem(element)" />
-					</v-list-item>
-				</template>
-			</draggable>
-		</v-list>
-		<v-button v-if="showAddNew" class="add-new" @click="addNew">
-			{{ addLabel }}
-		</v-button>
+		<draggable
+			v-if="Array.isArray(internalValue) && internalValue.length > 0"
+			tag="v-list"
+			:disabled="disabled"
+			:model-value="internalValue"
+			item-key="id"
+			handle=".drag-handle"
+			v-bind="{ 'force-fallback': true }"
+			@update:model-value="$emit('input', $event)"
+		>
+			<template #item="{ element, index }">
+				<v-list-item :dense="internalValue.length > 4" block clickable @click="openItem(index)">
+					<v-icon v-if="!disabled && !sort" name="drag_handle" class="drag-handle" left @click.stop="() => {}" />
+
+					<render-template
+						:fields="fields"
+						:item="{ ...defaults, ...element }"
+						:direction="direction"
+						:template="templateWithDefaults"
+					/>
+
+					<div class="spacer" />
+
+					<div class="item-actions">
+						<v-remove v-if="!disabled" confirm @action="removeItem(element)" />
+					</div>
+				</v-list-item>
+			</template>
+		</draggable>
+
+		<div class="actions">
+			<v-button v-if="showAddNew" :disabled @click="addNew">
+				{{ addLabel }}
+			</v-button>
+		</div>
 
 		<v-drawer
 			:model-value="drawerOpen"
@@ -291,29 +298,22 @@ function closeDrawer() {
 </template>
 
 <style lang="scss" scoped>
-.v-notice {
-	margin-bottom: 4px;
-}
+@use '@/styles/mixins';
 
 .v-list {
-	--v-list-padding: 0 0 4px;
+	@include mixins.list-interface;
 }
 
-.v-list-item {
-	display: flex;
-	cursor: pointer;
+.item-actions {
+	@include mixins.list-interface-item-actions;
 }
 
-.drag-handle {
-	cursor: grab;
+.actions {
+	@include mixins.list-interface-actions;
 }
 
 .drawer-item-content {
 	padding: var(--content-padding);
 	padding-bottom: var(--content-padding-bottom);
-}
-
-.add-new {
-	margin-top: 8px;
 }
 </style>

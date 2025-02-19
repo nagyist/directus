@@ -2,6 +2,7 @@ import { useEnv } from '@directus/env';
 import {
 	ErrorCode,
 	InvalidCredentialsError,
+	InvalidPayloadError,
 	InvalidProviderConfigError,
 	InvalidProviderError,
 	InvalidTokenError,
@@ -16,17 +17,21 @@ import jwt from 'jsonwebtoken';
 import type { Client } from 'openid-client';
 import { errors, generators, Issuer } from 'openid-client';
 import { getAuthProvider } from '../../auth.js';
+import { REFRESH_COOKIE_OPTIONS, SESSION_COOKIE_OPTIONS } from '../../constants.js';
 import getDatabase from '../../database/index.js';
 import emitter from '../../emitter.js';
-import { useLogger } from '../../logger.js';
+import { useLogger } from '../../logger/index.js';
 import { respond } from '../../middleware/respond.js';
+import { createDefaultAccountability } from '../../permissions/utils/create-default-accountability.js';
 import { AuthenticationService } from '../../services/authentication.js';
 import { UsersService } from '../../services/users.js';
 import type { AuthData, AuthDriverOptions, User } from '../../types/index.js';
 import asyncHandler from '../../utils/async-handler.js';
 import { getConfigFromEnv } from '../../utils/get-config-from-env.js';
 import { getIPFromReq } from '../../utils/get-ip-from-req.js';
-import { getMilliseconds } from '../../utils/get-milliseconds.js';
+import { getSecret } from '../../utils/get-secret.js';
+import { isLoginRedirectAllowed } from '../../utils/is-login-redirect-allowed.js';
+import { verifyJWT } from '../../utils/jwt.js';
 import { Url } from '../../utils/url.js';
 import { LocalAuthDriver } from './local.js';
 
@@ -150,7 +155,7 @@ export class OAuth2AuthDriver extends LocalAuthDriver {
 		// Flatten response to support dot indexes
 		userInfo = flatten(userInfo) as Record<string, unknown>;
 
-		const { provider, emailKey, identifierKey, allowPublicRegistration } = this.config;
+		const { provider, emailKey, identifierKey, allowPublicRegistration, syncUserInfo } = this.config;
 
 		const email = userInfo[emailKey ?? 'email'] ? String(userInfo[emailKey ?? 'email']) : undefined;
 		// Fallback to email if explicit identifier not found
@@ -176,13 +181,26 @@ export class OAuth2AuthDriver extends LocalAuthDriver {
 		if (userId) {
 			// Run hook so the end user has the chance to augment the
 			// user that is about to be updated
+			let emitPayload: Record<string, unknown> = {
+				auth_data: userPayload.auth_data,
+			};
+
+			if (syncUserInfo) {
+				emitPayload = {
+					...emitPayload,
+					first_name: userPayload.first_name,
+					last_name: userPayload.last_name,
+					email: userPayload.email,
+				};
+			}
+
 			const updatedUserPayload = await emitter.emitFilter(
 				`auth.update`,
-				{ auth_data: userPayload.auth_data },
+				emitPayload,
 				{
 					identifier,
 					provider: this.config['provider'],
-					providerPayload: { accessToken: tokenSet.access_token, userInfo },
+					providerPayload: { accessToken: tokenSet.access_token, idToken: tokenSet.id_token, userInfo },
 				},
 				{ database: getDatabase(), schema: this.schema, accountability: null },
 			);
@@ -209,7 +227,7 @@ export class OAuth2AuthDriver extends LocalAuthDriver {
 			{
 				identifier,
 				provider: this.config['provider'],
-				providerPayload: { accessToken: tokenSet.access_token, userInfo },
+				providerPayload: { accessToken: tokenSet.access_token, idToken: tokenSet.id_token, userInfo },
 			},
 			{ database: getDatabase(), schema: this.schema, accountability: null },
 		);
@@ -298,15 +316,16 @@ export function createOAuth2AuthRouter(providerName: string): Router {
 			const provider = getAuthProvider(providerName) as OAuth2AuthDriver;
 			const codeVerifier = provider.generateCodeVerifier();
 			const prompt = !!req.query['prompt'];
+			const redirect = req.query['redirect'];
 
-			const token = jwt.sign(
-				{ verifier: codeVerifier, redirect: req.query['redirect'], prompt },
-				env['SECRET'] as string,
-				{
-					expiresIn: '5m',
-					issuer: 'directus',
-				},
-			);
+			if (isLoginRedirectAllowed(redirect, providerName) === false) {
+				throw new InvalidPayloadError({ reason: `URL "${redirect}" can't be used to redirect after login` });
+			}
+
+			const token = jwt.sign({ verifier: codeVerifier, redirect, prompt }, getSecret(), {
+				expiresIn: '5m',
+				issuer: 'directus',
+			});
 
 			res.cookie(`oauth2.${providerName}`, token, {
 				httpOnly: true,
@@ -335,9 +354,7 @@ export function createOAuth2AuthRouter(providerName: string): Router {
 			let tokenData;
 
 			try {
-				tokenData = jwt.verify(req.cookies[`oauth2.${providerName}`], env['SECRET'] as string, {
-					issuer: 'directus',
-				}) as {
+				tokenData = verifyJWT(req.cookies[`oauth2.${providerName}`], getSecret()) as {
 					verifier: string;
 					redirect?: string;
 					prompt: boolean;
@@ -349,12 +366,11 @@ export function createOAuth2AuthRouter(providerName: string): Router {
 
 			const { verifier, redirect, prompt } = tokenData;
 
-			const accountability: Accountability = {
+			const accountability: Accountability = createDefaultAccountability({
 				ip: getIPFromReq(req),
-				role: null,
-			};
+			});
 
-			const userAgent = req.get('user-agent');
+			const userAgent = req.get('user-agent')?.substring(0, 1024);
 			if (userAgent) accountability.userAgent = userAgent;
 
 			const origin = req.get('origin');
@@ -365,16 +381,22 @@ export function createOAuth2AuthRouter(providerName: string): Router {
 				schema: req.schema,
 			});
 
+			const authMode = (env[`AUTH_${providerName.toUpperCase()}_MODE`] ?? 'session') as string;
+
 			let authResponse;
 
 			try {
 				res.clearCookie(`oauth2.${providerName}`);
 
-				authResponse = await authenticationService.login(providerName, {
-					code: req.query['code'],
-					codeVerifier: verifier,
-					state: req.query['state'],
-				});
+				authResponse = await authenticationService.login(
+					providerName,
+					{
+						code: req.query['code'],
+						codeVerifier: verifier,
+						state: req.query['state'],
+					},
+					{ session: authMode === 'session' },
+				);
 			} catch (error: any) {
 				// Prompt user for a new refresh_token if invalidated
 				if (isDirectusError(error, ErrorCode.InvalidToken) && !prompt) {
@@ -400,13 +422,11 @@ export function createOAuth2AuthRouter(providerName: string): Router {
 			const { accessToken, refreshToken, expires } = authResponse;
 
 			if (redirect) {
-				res.cookie(env['REFRESH_TOKEN_COOKIE_NAME'] as string, refreshToken, {
-					httpOnly: true,
-					domain: env['REFRESH_TOKEN_COOKIE_DOMAIN'] as string,
-					maxAge: getMilliseconds(env['REFRESH_TOKEN_TTL']),
-					secure: (env['REFRESH_TOKEN_COOKIE_SECURE'] as boolean) ?? false,
-					sameSite: (env['REFRESH_TOKEN_COOKIE_SAME_SITE'] as 'lax' | 'strict' | 'none') || 'strict',
-				});
+				if (authMode === 'session') {
+					res.cookie(env['SESSION_COOKIE_NAME'] as string, accessToken, SESSION_COOKIE_OPTIONS);
+				} else {
+					res.cookie(env['REFRESH_TOKEN_COOKIE_NAME'] as string, refreshToken, REFRESH_COOKIE_OPTIONS);
+				}
 
 				return res.redirect(redirect);
 			}

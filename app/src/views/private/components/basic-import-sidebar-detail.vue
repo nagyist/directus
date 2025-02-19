@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import api from '@/api';
-import { usePermissionsStore } from '@/stores/permissions';
+import { useCollectionPermissions } from '@/composables/use-permissions';
 import { notify } from '@/utils/notify';
 import { readableMimeType } from '@/utils/readable-mime-type';
 import { unexpectedError } from '@/utils/unexpected-error';
@@ -17,6 +17,8 @@ const emit = defineEmits(['refresh', 'download']);
 const { t, te } = useI18n();
 
 const { collection } = toRefs(props);
+
+const { createAllowed } = useCollectionPermissions(collection);
 
 const fileInput = ref<HTMLInputElement | null>(null);
 
@@ -94,10 +96,6 @@ function useUpload() {
 		}
 	}
 }
-
-const { hasPermission } = usePermissionsStore();
-
-const createAllowed = computed<boolean>(() => hasPermission(collection.value, 'create'));
 </script>
 
 <template>
@@ -136,10 +134,11 @@ const createAllowed = computed<boolean>(() => hasPermission(collection.value, 'c
 								</span>
 							</template>
 							<template #append>
-								<template v-if="file">
-									<v-icon v-tooltip="t('deselect')" class="deselect" name="close" @click.stop="clearFileInput" />
-								</template>
-								<v-icon v-else name="attach_file" />
+								<div class="item-actions">
+									<v-remove v-if="file" deselect @action="clearFileInput" />
+
+									<v-icon v-else name="attach_file" />
+								</div>
 							</template>
 						</v-input>
 					</template>
@@ -156,11 +155,15 @@ const createAllowed = computed<boolean>(() => hasPermission(collection.value, 'c
 </template>
 
 <style lang="scss" scoped>
-@import '@/styles/mixins/form-grid';
+@use '@/styles/mixins';
+
+.item-actions {
+	@include mixins.list-interface-item-actions;
+}
 
 .fields,
 .export-fields {
-	@include form-grid;
+	@include mixins.form-grid;
 
 	.v-divider {
 		grid-column: 1 / span 2;

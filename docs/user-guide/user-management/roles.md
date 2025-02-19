@@ -6,7 +6,8 @@ readTime:
 
 # Roles
 
-> Roles are essentially a bundle of pre-configured access permissions which you can (re)assign to any number of users.
+> Roles are a bundle of pre-configured policies which you can (re)assign to any number of users. Roles can also contain
+> other roles.
 
 ::: tip Learn More
 
@@ -16,45 +17,31 @@ To configure roles programmatically, see our API documentation on [roles](/refer
 
 ## View a Role
 
-<video title="Create a Role" autoplay playsinline muted loop controls>
-	<source src="https://cdn.directus.io/docs/v9/configuration/users-roles-permissions/roles-20220909/view-a-role-20220908A.mp4" type="video/mp4" />
-</video>
-
-To view an existing role, navigate to **Settings > Roles & Permissions > [Role]**. Now you can see the role's
-permissions and other details.
+To view an existing role, navigate to **Settings > User Roles > [Role]**. Now you can see the role's policies and other
+details.
 
 ## Create a Role
 
-<video title="Create a Role" autoplay playsinline muted loop controls>
-	<source src="https://cdn.directus.io/docs/v9/configuration/users-roles-permissions/roles-20220909/create-a-role-20220908A.mp4" type="video/mp4" />
-</video>
-
 To create a role, follow these steps.
 
-1. Navigate to **Settings > Roles & Permissions**.
+1. Navigate to **Settings > User Roles**.
 2. Click <span mi btn>add</span> in the page header.
 3. Enter a unique **Role Name**.
-4. Toggle **App Access** and **Admin Access** as desired.\
-   To learn more, see [configure role details](#configure-role-details).
-5. Click **Save** to confirm.
+4. Click **Save** to confirm.
 
 ::: tip
 
 Next, you will likely need to [configure the role's details](#configure-role-details) and
-[configure the role's permissions](#configure-role-permissions).
+[configure the role's policies](#configure-role-policies).
 
 :::
 
 ## Configure Role Details
 
-<video title="Configure Role Details" autoplay playsinline muted loop controls>
-	<source src="https://cdn.directus.io/docs/v9/configuration/users-roles-permissions/roles-20220909/configure-role-details-20220907A.mp4" type="video/mp4" />
-</video>
-
 In addition to defining permissions, roles come with a number of other configuration options. To configure a role's
 details, follow these steps.
 
-1.  Navigate to **Settings > Roles & Permissions > [Role]**.
+1.  Navigate to **Settings > Access Control > [Role]**.
 2.  Configure the following options as desired:
 
     - **Permissions** — Configures [access permissions](#configure-permissions) for the role.
@@ -82,27 +69,22 @@ details, follow these steps.
 
 Roles with _App Access_ enabled are created with the minimum permissions required to login to the app and access their
 own profile information. Roles that have neither _Admin_ nor _App Access_ enabled are created with public permissions.
-You can always [reconfigure permissions](/user-guide/user-management/permissions#configure-permissions) later.
+You can always reconfigure permissions later.
 
 :::
 
 ## Delete a Role
 
-<video title="Create a Role" autoplay playsinline muted loop controls>
-	<source src="https://cdn.directus.io/docs/v9/configuration/users-roles-permissions/roles-20220909/delete-a-role-20220907A.mp4" type="video/mp4" />
-</video>
-
 To delete a role, follow these steps.
 
-1. Navigate to **Settings > Roles & Permissions > [Role]**.
+1. Navigate to **Settings > Access Control > [Role]**.
 2. Click <span mi btn dngr>delete</span> in the page header and a popup will appear.
 3. Click **Delete** to confirm.
 
 ::: warning Users in a Deleted Role
 
 If you delete a role that still has users in it, those users will be given a `NULL` role, which limits them to public
-permissions. However, you can always
-[assign them a new role](/user-guide/user-management/users#assign-role-to-existing-user).
+permissions. However, you can always assign them a new role.
 
 :::
 

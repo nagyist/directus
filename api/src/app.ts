@@ -11,10 +11,12 @@ import { createRequire } from 'node:module';
 import path from 'path';
 import qs from 'qs';
 import { registerAuthProviders } from './auth.js';
+import accessRouter from './controllers/access.js';
 import activityRouter from './controllers/activity.js';
 import assetsRouter from './controllers/assets.js';
 import authRouter from './controllers/auth.js';
 import collectionsRouter from './controllers/collections.js';
+import commentsRouter from './controllers/comments.js';
 import dashboardsRouter from './controllers/dashboards.js';
 import extensionsRouter from './controllers/extensions.js';
 import fieldsRouter from './controllers/fields.js';
@@ -23,11 +25,13 @@ import flowsRouter from './controllers/flows.js';
 import foldersRouter from './controllers/folders.js';
 import graphqlRouter from './controllers/graphql.js';
 import itemsRouter from './controllers/items.js';
+import metricsRouter from './controllers/metrics.js';
 import notFoundHandler from './controllers/not-found.js';
 import notificationsRouter from './controllers/notifications.js';
 import operationsRouter from './controllers/operations.js';
 import panelsRouter from './controllers/panels.js';
 import permissionsRouter from './controllers/permissions.js';
+import policiesRouter from './controllers/policies.js';
 import presetsRouter from './controllers/presets.js';
 import relationsRouter from './controllers/relations.js';
 import revisionsRouter from './controllers/revisions.js';
@@ -37,6 +41,7 @@ import serverRouter from './controllers/server.js';
 import settingsRouter from './controllers/settings.js';
 import sharesRouter from './controllers/shares.js';
 import translationsRouter from './controllers/translations.js';
+import tusRouter from './controllers/tus.js';
 import usersRouter from './controllers/users.js';
 import utilsRouter from './controllers/utils.js';
 import versionsRouter from './controllers/versions.js';
@@ -50,24 +55,23 @@ import {
 import emitter from './emitter.js';
 import { getExtensionManager } from './extensions/index.js';
 import { getFlowManager } from './flows.js';
-import { createExpressLogger, useLogger } from './logger.js';
+import { createExpressLogger, useLogger } from './logger/index.js';
 import authenticate from './middleware/authenticate.js';
 import cache from './middleware/cache.js';
-import { checkIP } from './middleware/check-ip.js';
 import cors from './middleware/cors.js';
-import errorHandler from './middleware/error-handler.js';
+import { errorHandler } from './middleware/error-handler.js';
 import extractToken from './middleware/extract-token.js';
-import getPermissions from './middleware/get-permissions.js';
 import rateLimiterGlobal from './middleware/rate-limiter-global.js';
 import rateLimiter from './middleware/rate-limiter-ip.js';
 import sanitizeQuery from './middleware/sanitize-query.js';
 import schema from './middleware/schema.js';
-import { initTelemetry } from './telemetry/index.js';
+import metricsSchedule from './schedules/metrics.js';
+import retentionSchedule from './schedules/retention.js';
+import telemetrySchedule from './schedules/telemetry.js';
+import tusSchedule from './schedules/tus.js';
 import { getConfigFromEnv } from './utils/get-config-from-env.js';
 import { Url } from './utils/url.js';
-import { validateEnv } from './utils/validate-env.js';
 import { validateStorage } from './utils/validate-storage.js';
-import { init as initWebhooks } from './webhooks.js';
 
 const require = createRequire(import.meta.url);
 
@@ -76,16 +80,7 @@ export default async function createApp(): Promise<express.Application> {
 	const logger = useLogger();
 	const helmet = await import('helmet');
 
-	validateEnv(['KEY', 'SECRET']);
-
-	if (!new Url(env['PUBLIC_URL'] as string).isAbsolute()) {
-		logger.warn('PUBLIC_URL should be a full URL');
-	}
-
-	await validateStorage();
-
 	await validateDatabaseConnection();
-	await validateDatabaseExtensions();
 
 	if ((await isInstalled()) === false) {
 		logger.error(`Database doesn't have Directus tables installed.`);
@@ -95,6 +90,19 @@ export default async function createApp(): Promise<express.Application> {
 	if ((await validateMigrations()) === false) {
 		logger.warn(`Database migrations have not all been run`);
 	}
+
+	if (!env['SECRET']) {
+		logger.warn(
+			`"SECRET" env variable is missing. Using a random value instead. Tokens will not persist between restarts. This is not appropriate for production usage.`,
+		);
+	}
+
+	if (!new Url(env['PUBLIC_URL'] as string).isAbsolute()) {
+		logger.warn('"PUBLIC_URL" should be a full URL');
+	}
+
+	await validateDatabaseExtensions();
+	await validateStorage();
 
 	await registerAuthProviders();
 
@@ -136,7 +144,7 @@ export default async function createApp(): Promise<express.Application> {
 				{
 					useDefaults: true,
 					directives: {
-						// Unsafe-eval is required for vue3 / vue-i18n / app extensions
+						// Unsafe-eval is required for app extensions
 						scriptSrc: ["'self'", "'unsafe-eval'"],
 
 						// Even though this is recommended to have enabled, it breaks most local
@@ -147,9 +155,15 @@ export default async function createApp(): Promise<express.Application> {
 						// These are required for MapLibre
 						workerSrc: ["'self'", 'blob:'],
 						childSrc: ["'self'", 'blob:'],
-						imgSrc: ["'self'", 'data:', 'blob:'],
+						imgSrc: [
+							"'self'",
+							'data:',
+							'blob:',
+							'https://raw.githubusercontent.com',
+							'https://avatars.githubusercontent.com',
+						],
 						mediaSrc: ["'self'"],
-						connectSrc: ["'self'", 'https://*'],
+						connectSrc: ["'self'", 'https://*', 'wss://*'],
 					},
 				},
 				getConfigFromEnv('CONTENT_SECURITY_POLICY_'),
@@ -251,15 +265,11 @@ export default async function createApp(): Promise<express.Application> {
 
 	app.use(authenticate);
 
-	app.use(checkIP);
-
 	app.use(sanitizeQuery);
 
 	app.use(cache);
 
 	app.use(schema);
-
-	app.use(getPermissions);
 
 	await emitter.emitInit('middlewares.after', { app });
 
@@ -270,19 +280,32 @@ export default async function createApp(): Promise<express.Application> {
 	app.use('/graphql', graphqlRouter);
 
 	app.use('/activity', activityRouter);
+	app.use('/access', accessRouter);
 	app.use('/assets', assetsRouter);
 	app.use('/collections', collectionsRouter);
+	app.use('/comments', commentsRouter);
 	app.use('/dashboards', dashboardsRouter);
 	app.use('/extensions', extensionsRouter);
 	app.use('/fields', fieldsRouter);
+
+	if (env['TUS_ENABLED'] === true) {
+		app.use('/files/tus', tusRouter);
+	}
+
 	app.use('/files', filesRouter);
 	app.use('/flows', flowsRouter);
 	app.use('/folders', foldersRouter);
 	app.use('/items', itemsRouter);
+
+	if (env['METRICS_ENABLED'] === true) {
+		app.use('/metrics', metricsRouter);
+	}
+
 	app.use('/notifications', notificationsRouter);
 	app.use('/operations', operationsRouter);
 	app.use('/panels', panelsRouter);
 	app.use('/permissions', permissionsRouter);
+	app.use('/policies', policiesRouter);
 	app.use('/presets', presetsRouter);
 	app.use('/translations', translationsRouter);
 	app.use('/relations', relationsRouter);
@@ -307,10 +330,10 @@ export default async function createApp(): Promise<express.Application> {
 
 	await emitter.emitInit('routes.after', { app });
 
-	// Register all webhooks
-	await initWebhooks();
-
-	initTelemetry();
+	await retentionSchedule();
+	await telemetrySchedule();
+	await tusSchedule();
+	await metricsSchedule();
 
 	await emitter.emitInit('app.after', { app });
 

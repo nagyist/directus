@@ -111,12 +111,6 @@ const { createAllowed, updateAllowed, selectAllowed, deleteAllowed } = useRelati
 
 const pageCount = computed(() => Math.ceil(totalItemCount.value / limit.value));
 
-function getDeselectIcon(item: DisplayItem) {
-	if (item.$type === 'deleted') return 'settings_backup_restore';
-	if (isLocalItem(item)) return 'delete';
-	return 'close';
-}
-
 function sortItems(items: DisplayItem[]) {
 	const info = relationInfo.value;
 	const sortField = info?.sortField;
@@ -219,8 +213,9 @@ const downloadName = computed(() => {
 	const junctionField = relationInfo.value.junctionField.field;
 	const relationPkField = relationInfo.value.relatedPrimaryKeyField.field;
 
-	return displayItems.value.find((item) => get(item, [junctionField, relationPkField]))?.directus_files_id
-		?.filename_download;
+	return displayItems.value.find((item) => get(item, [junctionField, relationPkField]) === relatedPrimaryKey.value)?.[
+		junctionField
+	]?.filename_download;
 });
 
 const downloadUrl = computed(() => {
@@ -236,6 +231,13 @@ function getFilename(junctionRow: Record<string, any>) {
 	if (!key) return null;
 
 	return key;
+}
+
+function getDownloadName(junctionRow: Record<string, any>) {
+	const junctionField = relationInfo.value?.junctionField.field;
+	if (!junctionField) return;
+
+	return junctionRow[junctionField]?.filename_download;
 }
 
 const customFilter = computed(() => {
@@ -290,11 +292,13 @@ const allowDrag = computed(
 			/>
 		</template>
 
-		<v-notice v-else-if="displayItems.length === 0">{{ t('no_items') }}</v-notice>
+		<template v-else>
+			<v-notice v-if="displayItems.length === 0">{{ t('no_items') }}</v-notice>
 
-		<v-list v-else>
 			<draggable
+				v-else
 				:model-value="displayItems"
+				tag="v-list"
 				item-key="id"
 				handle=".drag-handle"
 				:disabled="!allowDrag"
@@ -305,48 +309,56 @@ const allowDrag = computed(
 					<v-list-item
 						:class="{ deleted: element.$type === 'deleted' }"
 						:dense="totalItemCount > 4"
-						:disabled="disabled || !updateAllowed"
+						:disabled="disabled"
 						block
 						clickable
 						@click="editItem(element)"
 					>
 						<v-icon v-if="allowDrag" name="drag_handle" class="drag-handle" left @click.stop="() => {}" />
+
 						<render-template
 							:collection="relationInfo.junctionCollection.collection"
 							:item="element"
 							:template="templateWithDefaults"
 						/>
-						<div class="spacer" />
-						<v-icon
-							v-if="!disabled && (deleteAllowed || isLocalItem(element))"
-							:name="getDeselectIcon(element)"
-							class="deselect"
-							@click.stop="deleteItem(element)"
-						/>
-						<v-menu show-arrow placement="bottom-end">
-							<template #activator="{ toggle }">
-								<v-icon name="more_vert" clickable @click.stop="toggle" />
-							</template>
 
-							<v-list>
-								<v-list-item clickable :href="getAssetUrl(getFilename(element))">
-									<v-list-item-icon><v-icon name="launch" /></v-list-item-icon>
-									<v-list-item-content>{{ t('open_file_in_tab') }}</v-list-item-content>
-								</v-list-item>
-								<v-list-item
-									clickable
-									:download="element.directus_files_id.filename_download"
-									:href="getAssetUrl(getFilename(element), true)"
-								>
-									<v-list-item-icon><v-icon name="download" /></v-list-item-icon>
-									<v-list-item-content>{{ t('download_file') }}</v-list-item-content>
-								</v-list-item>
-							</v-list>
-						</v-menu>
+						<div class="spacer" />
+
+						<div class="item-actions">
+							<v-remove
+								v-if="!disabled && (deleteAllowed || isLocalItem(element))"
+								:item-type="element.$type"
+								:item-info="relationInfo"
+								:item-is-local="isLocalItem(element)"
+								:item-edits="getItemEdits(element)"
+								@action="deleteItem(element)"
+							/>
+
+							<v-menu show-arrow placement="bottom-end">
+								<template #activator="{ toggle }">
+									<v-icon name="more_vert" clickable @click.stop="toggle" />
+								</template>
+
+								<v-list>
+									<v-list-item clickable :href="getAssetUrl(getFilename(element))">
+										<v-list-item-icon><v-icon name="launch" /></v-list-item-icon>
+										<v-list-item-content>{{ t('open_file_in_tab') }}</v-list-item-content>
+									</v-list-item>
+									<v-list-item
+										clickable
+										:download="getDownloadName(element)"
+										:href="getAssetUrl(getFilename(element), true)"
+									>
+										<v-list-item-icon><v-icon name="download" /></v-list-item-icon>
+										<v-list-item-content>{{ t('download_file') }}</v-list-item-content>
+									</v-list-item>
+								</v-list>
+							</v-menu>
+						</div>
 					</v-list-item>
 				</template>
 			</draggable>
-		</v-list>
+		</template>
 
 		<div class="actions">
 			<v-button v-if="enableCreate && createAllowed" :disabled="disabled" @click="showUpload = true">
@@ -355,12 +367,12 @@ const allowDrag = computed(
 			<v-button v-if="enableSelect && selectAllowed" :disabled="disabled" @click="selectModalActive = true">
 				{{ t('add_existing') }}
 			</v-button>
-			<v-pagination v-if="pageCount > 1" v-model="page" :length="pageCount" :total-visible="5" />
+			<v-pagination v-if="pageCount > 1" v-model="page" :length="pageCount" :total-visible="2" show-first-last />
 		</div>
 
 		<drawer-item
 			v-model:active="editModalActive"
-			:disabled="disabled || (!updateAllowed && currentlyEditing !== null)"
+			:disabled="disabled"
 			:collection="relationInfo.junctionCollection.collection"
 			:primary-key="currentlyEditing || '+'"
 			:related-primary-key="relatedPrimaryKey || '+'"
@@ -408,47 +420,17 @@ const allowDrag = computed(
 </template>
 
 <style lang="scss" scoped>
+@use '@/styles/mixins';
+
 .v-list {
-	--v-list-padding: 0 0 4px;
+	@include mixins.list-interface($deleteable: true);
+}
 
-	.v-list-item.deleted {
-		--v-list-item-border-color: var(--danger-25);
-		--v-list-item-border-color-hover: var(--danger-50);
-		--v-list-item-background-color: var(--danger-10);
-		--v-list-item-background-color-hover: var(--danger-25);
-
-		::v-deep(.v-icon) {
-			color: var(--danger-75);
-		}
-	}
+.item-actions {
+	@include mixins.list-interface-item-actions;
 }
 
 .actions {
-	margin-top: 8px;
-	display: flex;
-	gap: 8px;
-
-	.v-pagination {
-		margin-left: auto;
-
-		::v-deep(.v-button) {
-			display: inline-flex;
-		}
-	}
-}
-
-.deselect {
-	--v-icon-color: var(--theme--form--field--input--foreground-subdued);
-	margin-right: 4px;
-	transition: color var(--fast) var(--transition);
-	cursor: pointer;
-
-	&:hover {
-		--v-icon-color: var(--theme--danger);
-	}
-}
-
-.render-template {
-	height: 100%;
+	@include mixins.list-interface-actions($pagination: true);
 }
 </style>

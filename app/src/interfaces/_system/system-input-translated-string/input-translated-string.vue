@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { getCurrentLanguage } from '@/lang/get-current-language';
 import type { Translation } from '@/stores/translations';
 import { useTranslationsStore } from '@/stores/translations';
 import { fetchAll } from '@/utils/fetch-all';
 import { unexpectedError } from '@/utils/unexpected-error';
 import DrawerItem from '@/views/private/components/drawer-item.vue';
+import { snakeCase } from 'lodash';
 import { computed, ref, unref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import CustomTranslationsTooltip from './custom-translations-tooltip.vue';
@@ -83,6 +85,7 @@ const localValue = computed<string | null>({
 const create = async (item: Translation) => {
 	await translationsStore.create(item);
 	await fetchTranslationsKeys();
+	setValue(`${translationPrefix}${item.key}`);
 };
 
 watch(
@@ -122,6 +125,21 @@ function openNewCustomTranslationDrawer() {
 	menuEl.value.deactivate();
 	isCustomTranslationDrawerOpen.value = true;
 }
+
+const newTranslationDefaults = computed(() => {
+	const defaults = {
+		language: getCurrentLanguage(),
+	};
+
+	if (localValue.value && !localValue.value.startsWith(translationPrefix)) {
+		Object.assign(defaults, {
+			key: snakeCase(localValue.value),
+			value: localValue.value,
+		});
+	}
+
+	return defaults;
+});
 </script>
 
 <template>
@@ -200,10 +218,11 @@ function openNewCustomTranslationDrawer() {
 			</v-list>
 		</v-menu>
 
-		<DrawerItem
+		<drawer-item
 			v-model:active="isCustomTranslationDrawerOpen"
 			collection="directus_translations"
 			primary-key="+"
+			:edits="newTranslationDefaults"
 			@input="create"
 		/>
 	</div>

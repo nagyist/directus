@@ -20,8 +20,8 @@ let mockNamespace: string;
 let mockKey: string;
 let mockNamespacedKey: string;
 let mockRedis: Redis;
-let mockBuffer: Buffer;
 let mockUint8Array: Uint8Array;
+let mockBuffer: Buffer<Uint8Array>;
 let mockCompressedUint8Array: Uint8Array;
 let mockDecompressedUint8Array: Uint8Array;
 let mockValue: string;
@@ -32,8 +32,8 @@ beforeEach(() => {
 	mockNamespace = 'test';
 	mockNamespacedKey = 'namespaced:test-key';
 
-	mockBuffer = Buffer.from('test');
 	mockUint8Array = new Uint8Array();
+	mockBuffer = Buffer.from(mockUint8Array);
 	mockCompressedUint8Array = new Uint8Array([1, 2, 3]);
 	mockDecompressedUint8Array = new Uint8Array([1, 2, 3]);
 
@@ -281,5 +281,31 @@ describe('setMax', () => {
 		const res = await kv.setMax(mockKey, mockAmount);
 
 		expect(res).toBe(false);
+	});
+});
+
+describe('clear', () => {
+	test('Uses stream for iterating over keys, unlinks them in a pipeline', async () => {
+		kv['redis'].scanStream = vi.fn().mockReturnValue({
+			async *[Symbol.asyncIterator]() {
+				yield [mockKey];
+				yield [mockKey];
+			},
+		});
+
+		const unlinkFn = vi.fn();
+		const execFn = vi.fn();
+
+		kv['redis'].pipeline = vi.fn().mockReturnValue({
+			unlink: unlinkFn,
+			exec: execFn,
+		});
+
+		await kv.clear();
+
+		expect(kv['redis'].pipeline).toHaveBeenCalledOnce();
+		expect(withNamespace).toHaveBeenCalledWith('*', mockNamespace);
+		expect(unlinkFn).toHaveBeenCalledTimes(2); // See the mocked key chunks from `scanStream`
+		expect(execFn).toHaveBeenCalledOnce();
 	});
 });
